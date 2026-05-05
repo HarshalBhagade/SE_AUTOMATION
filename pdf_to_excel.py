@@ -1,9 +1,13 @@
 import os
 import re
+import warnings
 import pdfplumber
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from datetime import datetime
+
+# Suppress font descriptor warnings from reportlab
+warnings.filterwarnings("ignore", message="Could not get FontBBox")
 
 OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
 
@@ -20,7 +24,7 @@ def extract_data(pdf_path):
     lr_no = lr_match.group(1).strip() if lr_match else ""
 
     # Invoice No
-    inv_match = re.search(r'Invoice No\.\s*\n?\s*(FOPC\w+)', text)
+    inv_match = re.search(r'Invoice No\.\s*\n?\s*(FOP[A-Z]\d+)', text)
     invoice_no = inv_match.group(1).strip() if inv_match else ""
 
     # Invoice Date
