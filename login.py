@@ -21,8 +21,11 @@ CONTINUE_BUTTON_SELECTOR = (
     "div.w-full.max-w-sm.mx-auto.bg-delhivery-background-default.font-ibm.p-8 > "
     "form > button"
 )
-PASSWORD_SELECTOR = "#password"
-LOGIN_BUTTON_SELECTOR = "#kc-login"
+# After Continue, the Keycloak-hosted form re-renders with a disabled email field
+# plus a password field, so target by type/autocomplete instead of Keycloak ids.
+# ":visible" is required — the page keeps a hidden password input in the DOM too.
+PASSWORD_SELECTOR = "form input[type='password'][autocomplete='current-password']:visible"
+LOGIN_BUTTON_SELECTOR = "form button:has-text('Login'):visible"
 
 
 def login():
@@ -42,13 +45,17 @@ def login():
         page.click(CONTINUE_BUTTON_SELECTOR)
 
         print("Waiting for password page...")
-        page.wait_for_selector(PASSWORD_SELECTOR)
+        # Continue redirects through the Keycloak auth endpoint before the
+        # password form renders, so let the navigation settle first.
+        page.wait_for_load_state("networkidle")
+        password_field = page.locator(PASSWORD_SELECTOR).first
+        password_field.wait_for()
 
         print("Entering password...")
-        page.fill(PASSWORD_SELECTOR, PASSWORD)
+        password_field.fill(PASSWORD)
 
         print("Clicking Login...")
-        page.click(LOGIN_BUTTON_SELECTOR)
+        page.locator(LOGIN_BUTTON_SELECTOR).first.click()
 
         print("Waiting for post-login page...")
         page.wait_for_load_state("networkidle")
