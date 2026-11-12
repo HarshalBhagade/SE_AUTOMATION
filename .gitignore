@@ -4,3 +4,4 @@ freight_invoices.xlsx
 order_links.json
 .claude/settings.local.json
 .venv
+__pycache__

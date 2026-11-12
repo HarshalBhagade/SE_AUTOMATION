@@ -54,6 +54,39 @@ FREIGHT_DOWNLOAD_SELECTOR = (
 DOWNLOAD_TIMEOUTS_MS = [30000, 60000, 90000]
 
 
+# The header's tenant switcher is a button showing the current business line
+# (e.g. "Domestic") over the client name, with a chevron. Opening it renders a
+# sibling panel with a "Search client..." box and one button per tenant, each
+# labelled by a div.text-label. Classes are Tailwind utilities, so anchor on
+# the chevron icon and the search box rather than a long CSS path.
+TARGET_TENANT = "B2B Surface"
+TENANT_TRIGGER_SELECTOR = "div.relative.min-w-60 > button:has(svg[data-icon='chevron-down'])"
+TENANT_PANEL_SELECTOR = "div.absolute:has(input[placeholder='Search client...'])"
+
+
+def wait_for_on_screen(locator, timeout_s=30):
+    """Return the first match that sits horizontally inside the viewport.
+
+    The orders page renders a hidden copy of its filter bar at left:-99999px
+    (opacity 0, pointer-events none) to measure widths, so each filter
+    matches twice and .first picks the unclickable copy. Playwright still
+    counts that copy as visible, so filter on position instead.
+    """
+    viewport_width = locator.page.viewport_size["width"]
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        for i in range(locator.count()):
+            candidate = locator.nth(i)
+            try:
+                box = candidate.bounding_box()
+            except Exception:
+                continue  # re-rendered between count() and bounding_box()
+            if box and box["x"] + box["width"] > 0 and box["x"] < viewport_width:
+                return candidate
+        time.sleep(0.5)
+    raise TimeoutError(f"No on-screen match for {locator} after {timeout_s}s")
+
+
 def download_invoice(page, link, order_id, output_dir):
     """Download one order's freight invoice. Returns True on success.
 
@@ -159,24 +192,23 @@ def login():
         except Exception:
             print("No password reset popup found, continuing...")
 
-        # Click the tenant selection dropdown
-        tenant_dropdown_selector = (
-            "#app > div > div > div.default-layout__header > div > "
-            "div.ucp-headers__right > div.ucp__inputs--list-search.ucp-headers__tenant-selection.ml-2 > "
-            "div.ap-meta-label > button > div > div"
-        )
+        # Open the tenant selection dropdown
         print("Clicking tenant selection dropdown...")
-        page.wait_for_selector(tenant_dropdown_selector)
-        page.click(tenant_dropdown_selector)
+        tenant_trigger = page.locator(TENANT_TRIGGER_SELECTOR).first
+        tenant_trigger.wait_for()
+        tenant_trigger.click()
 
-        # Select "B2B Surface" from the dropdown
-        print("Selecting B2B Surface...")
-        page.wait_for_selector("div.item-title.utility-label.text-font-default-black.max-w-full.truncate")
-        page.locator(
-            "div.item-title.utility-label.text-font-default-black.max-w-full.truncate",
-            has_text="B2B Surface"
-        ).click()
-        print("Selected B2B Surface.")
+        # Select "B2B Surface" from the dropdown. Scope to the open panel so
+        # the trigger itself (which shows the current tenant) never matches.
+        print(f"Selecting {TARGET_TENANT}...")
+        tenant_panel = page.locator(TENANT_PANEL_SELECTOR).first
+        tenant_panel.wait_for()
+        tenant_option = tenant_panel.locator(
+            f"button:has(div.text-label:text-is('{TARGET_TENANT}'))"
+        ).first
+        tenant_option.wait_for()
+        tenant_option.click()
+        print(f"Selected {TARGET_TENANT}.")
 
         page.wait_for_load_state("networkidle")
         print(f"Ready. Current URL: {page.url}")
@@ -196,31 +228,27 @@ def login():
             print("No password reset popup, continuing...")
 
         # Open the "Delivered date" filter dropdown. Several filters share the
-        # same testid, so pick the one showing the delivered-date label.
+        # same testid, so pick the one showing the delivered-date label — and
+        # the real, on-screen copy rather than the hidden measuring copy.
         print("Opening date picker dropdown...")
-        datepicker_trigger = page.get_by_test_id("filter-dropdown-trigger").filter(
-            has_text="Delivered date"
-        ).first
-        datepicker_trigger.wait_for()
+        datepicker_trigger = wait_for_on_screen(
+            page.get_by_test_id("filter-dropdown-trigger").filter(has_text="Delivered date")
+        )
         datepicker_trigger.click()
 
-        # Select the "Last Month" preset by its label
+        # The calendar popover lists presets (Today ... Last 90 Days, Custom)
+        # with Cancel / Apply at the bottom.
+        calendar = page.get_by_test_id("datepicker-calendar")
+        calendar.wait_for()
+
         print("Selecting Last Month...")
-        last_month_option = page.get_by_role("button", name="Last Month", exact=True).first
-        last_month_option.wait_for()
-        last_month_option.click()
+        calendar.get_by_role("button", name="Last Month", exact=True).click()
         print("Date range selected.")
 
-        # Some layouts still need an explicit apply; others filter immediately.
-        try:
-            done_button = page.get_by_role(
-                "button", name=re.compile(r"^(Done|Apply)$", re.I)
-            ).first
-            done_button.wait_for(timeout=3000)
-            print("Clicking Done...")
-            done_button.click()
-        except Exception:
-            print("No Done button, filter applied directly.")
+        # Apply stays disabled until a preset is picked; click() waits for it
+        # to enable. Without this the filter is never applied.
+        print("Clicking Apply...")
+        calendar.get_by_role("button", name=re.compile(r"^(Done|Apply)$", re.I)).click()
 
         print("Waiting 5 seconds for table to load...")
         time.sleep(5)
